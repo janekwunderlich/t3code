@@ -10,6 +10,7 @@ import { remarkCodexDirectives } from "@t3tools/shared/codexMarkdownDirectives";
 import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
 import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
+import { remarkMath } from "@t3tools/shared/markdownMath";
 
 function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: string[]) {
   let tree: Root | undefined;
@@ -34,6 +35,7 @@ function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: 
         remarkGithubAlerts,
         remarkNormalizeListItemIndentation,
         remarkCodexDirectives,
+        remarkMath,
         ...(incremental ? [incremental] : []),
       ]}
       rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
@@ -47,6 +49,26 @@ function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: 
 const prefix = "# Before\n\n```ts\nconst values = [1, 2];\n```\n\n";
 
 describe("incremental Markdown parsing", () => {
+  it("preserves math, source positions, and incomplete formulas across cached fences", () => {
+    const source =
+      String.raw`Before \(x^2\).` +
+      "\n\n" +
+      prefix +
+      String.raw`After \(\frac{a}{b}\).
+
+$$
+\begin{aligned}a &= b \\
+c &= d\end{aligned}
+$$
+
+- [ ] Task after math`;
+    const incremental = createIncrementalMarkdownPlugin();
+    for (let end = 0; end <= source.length; end++) {
+      const text = source.slice(0, end);
+      expect(render(text, incremental), `prefix ${end}`).toEqual(render(text));
+    }
+  });
+
   it("keeps the document prefix cached when list recovery parses contain fences", () => {
     const source =
       prefix +

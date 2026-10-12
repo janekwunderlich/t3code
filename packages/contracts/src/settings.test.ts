@@ -377,6 +377,12 @@ describe("ClientSettings composer context strip", () => {
   });
 });
 
+describe("ClientSettings math rendering", () => {
+  it("defaults math rendering off", () => {
+    expect(decodeClientSettings({}).renderMath).toBe(false);
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

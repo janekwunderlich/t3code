@@ -443,6 +443,10 @@
       "types": "./src/proposedPlanText.ts",
       "import": "./src/proposedPlanText.ts"
     },
+    "./markdownMath": {
+      "types": "./src/markdownMath.ts",
+      "import": "./src/markdownMath.ts"
+    },
     "./markdownPipeline": {
       "types": "./src/markdownPipeline.ts",
       "import": "./src/markdownPipeline.ts"

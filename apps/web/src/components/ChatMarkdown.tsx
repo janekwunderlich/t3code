@@ -11,6 +11,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
+import { mayContainMarkdownMath, remarkMath } from "@t3tools/shared/markdownMath";
 import { isAbsolutePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -156,6 +157,7 @@ import { GitHubIcon } from "./Icons";
 import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
 import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { MarkdownMath } from "./chat/MarkdownMath";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -2497,6 +2499,7 @@ function useChatMarkdownState({
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  const renderMath = useClientSettings((settings) => settings.renderMath);
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (
@@ -2742,6 +2745,7 @@ function useChatMarkdownState({
       openMarkdownMedia,
       projects,
       linkedThreadPullRequestFor,
+      renderMath,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2775,6 +2779,7 @@ function useChatMarkdownState({
       openMarkdownMedia,
       projects,
       linkedThreadPullRequestFor,
+      renderMath,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -3173,9 +3178,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
+    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, renderMath } = use(
       ChatMarkdownRendererContext,
     );
+    const math = node?.properties?.dataMath;
+    if (renderMath && (math === "inline" || math === "display" || math === "block")) {
+      return <MarkdownMath tex={nodeToPlainText(children)} layout={math} />;
+    }
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
@@ -3416,13 +3425,20 @@ function ChatMarkdown({
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+  // Find matches the regular Markdown the server indexes, delimiters included, so
+  // formulas stay unparsed while it is open. Only messages that could hold math
+  // read Find state, so opening it does not re-render every message. Math is local
+  // syntax with no document-wide state, so it keeps incremental parsing.
+  const mathSyntax =
+    componentState.renderMath && mayContainMarkdownMath(text) && !use(MarkdownFindContext);
   const remarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...(mathSyntax ? [remarkMath] : []),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [extraRemarkPlugins, incrementalParsing, lineBreaks, mathSyntax],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.

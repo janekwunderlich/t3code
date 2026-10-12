@@ -1992,6 +1992,30 @@ code {
   background: color-mix(in srgb, var(--contrast-border) 78%, transparent);
 }
 
+/* Display math is a block in the reading flow; a wide equation scrolls itself. */
+.chat-markdown .chat-markdown-math[data-display] {
+  display: block;
+  margin: 0.65rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Room for tall glyphs that the scroll container would otherwise clip. */
+  padding-block: 0.15rem;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--contrast-border) 78%, transparent) transparent;
+}
+
+/* KaTeX centers display math, as papers do. An equation wider than the lane
+   starts at the left edge, so the scroll container reaches all of it. */
+.chat-markdown .chat-markdown-math .katex-display {
+  margin: 0;
+}
+
+.chat-markdown code.chat-markdown-math-source[data-display] {
+  display: block;
+  margin: 0.65rem 0;
+  white-space: pre-wrap;
+}
+
 :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
 }

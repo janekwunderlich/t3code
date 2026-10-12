@@ -8,6 +8,8 @@
 
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
+const TYPESET_MATH_SELECTOR = ".chat-markdown-math[data-markdown-copy]";
+
 const SANITIZED_HTML_SELECTOR = [
   "button",
   "input",
@@ -365,6 +367,11 @@ export function serializeTableElementToCsv(table: Element): string {
 }
 
 function sanitizedHtmlFrom(container: Element): string {
+  // KaTeX's visual HTML needs its stylesheet (and contains aria-hidden nodes).
+  // Rich paste carries the same portable TeX as plain paste, not an empty formula.
+  for (const math of container.querySelectorAll(TYPESET_MATH_SELECTOR)) {
+    math.replaceWith(document.createTextNode(math.getAttribute("data-markdown-copy") ?? ""));
+  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
@@ -380,14 +387,30 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+/** Treat a typeset formula as one copyable unit, even when a drag starts inside it. */
+function mathSelectionRange(range: Range): Range {
+  const mathAt = (node: Node) =>
+    (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)?.closest(
+      TYPESET_MATH_SELECTOR,
+    );
+  const start = mathAt(range.startContainer);
+  const end = mathAt(range.endContainer);
+  if (!start && !end) return range;
+  const expanded = range.cloneRange();
+  if (start) expanded.setStartBefore(start);
+  if (end) expanded.setEndAfter(end);
+  return expanded;
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
-    const range = selection.getRangeAt(index);
-    if (range.collapsed) continue;
+    const selected = selection.getRangeAt(index);
+    if (selected.collapsed) continue;
+    const range = mathSelectionRange(selected);
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;
