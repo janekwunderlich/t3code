@@ -2,7 +2,7 @@
 
 import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
-import { useThreadFindHighlights } from "./chat/threadFindHighlights";
+import { collectThreadFindRanges, useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 
@@ -16,6 +16,7 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -24,13 +25,16 @@ vi.mock("./chat/MermaidDiagram", () => ({
   MermaidDiagram: () => <svg aria-label="Diagram" />,
 }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+const settingsOverrides = vi.hoisted(() => ({ renderMath: false }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
   const settings = actual.getClientSettings();
   return {
     ...actual,
-    useClientSettings: (select?: (value: typeof settings) => unknown) =>
-      select ? select(settings) : settings,
+    useClientSettings: (select?: (value: typeof settings) => unknown) => {
+      const current = { ...settings, ...settingsOverrides };
+      return select ? select(current) : current;
+    },
   };
 });
 vi.mock("./ui/tooltip", async () => {
@@ -1123,6 +1127,203 @@ it("opens a disclosure only when find selects a match inside it", async () => {
     container.remove();
     vi.unstubAllGlobals();
   }
+});
+
+describe("ChatMarkdown math", () => {
+  const answer = String.raw`Energy \(E = mc^2\) costs $5, not $10.
+
+$$
+\int_0^1 x^2 \, dx
+$$
+
+Broken \(\frac{1}{\)`;
+
+  async function renderMath(text: string, renderMath: boolean, searching = false) {
+    settingsOverrides.renderMath = renderMath;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(() =>
+      root.render(
+        <MarkdownFindContext value={searching}>
+          <ChatMarkdown cwd={undefined} text={text} />
+        </MarkdownFindContext>,
+      ),
+    );
+    // The first formula suspends on the lazily imported KaTeX renderer.
+    await act(() => import("./chat/markdownMathRenderer"));
+    return {
+      container,
+      async [Symbol.asyncDispose]() {
+        await act(() => root.unmount());
+        container.remove();
+        window.getSelection()?.removeAllRanges();
+        vi.unstubAllGlobals();
+        settingsOverrides.renderMath = false;
+      },
+    };
+  }
+
+  function copyRange(range: Range) {
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return chatMarkdownClipboardPayload(selection)!;
+  }
+
+  it("copies formulas as portable TeX in plain and rich text", async () => {
+    await using view = await renderMath(answer, true);
+    const range = document.createRange();
+    range.selectNodeContents(view.container);
+    const payload = copyRange(range);
+    expect(payload.text).toBe(answer);
+    const pasted = new DOMParser().parseFromString(payload.html, "text/html").body;
+    expect(pasted.querySelector(".katex")).toBeNull();
+    expect(pasted.textContent).toContain(String.raw`Energy \(E = mc^2\) costs $5`);
+    expect(pasted.textContent).toContain(String.raw`\int_0^1 x^2 \, dx`);
+  });
+
+  it("copies the regular Markdown view used by Find", async () => {
+    await using view = await renderMath(String.raw`Before \(\frac{a}{b}\) after`, true, true);
+    const range = document.createRange();
+    range.selectNodeContents(view.container);
+    const payload = copyRange(range);
+    const text = String.raw`Before (\frac{a}{b}) after`;
+    expect(payload.text).toBe(text);
+    expect(new DOMParser().parseFromString(payload.html, "text/html").body.textContent).toBe(text);
+  });
+
+  it.each([
+    { text: String.raw`Differentiating \(p_i\) with respect to \(z_k\).`, query: "(p_i)" },
+    {
+      text: String.raw`Differentiating \(p_i\) with respect to \(z_k\).`,
+      query: "Differentiating (p_i) with respect to (z_k)",
+    },
+    { text: String.raw`The set is \(\{a,b\}\).`, query: "({a,b})" },
+    { text: String.raw`The product is \(a*b*c\).`, query: "(abc)" },
+    { text: "The energy is\n$$\nx^2\n$$\nwhich is large.", query: "$$ x^2 $$" },
+    { text: String.raw`\[ p_i = z_k \]`, query: "[ p_i = z_k ]" },
+    { text: String.raw`Broken \(\frac{1}{\)`, query: "(\\frac{1}{)" },
+  ])("matches indexed math and adjacent prose for $query", async ({ text, query }) => {
+    const segments = searchableMessageSegments({ role: "assistant", text, streaming: false }) ?? [];
+    const count = segments.reduce(
+      (sum, segment) => sum + countThreadSearchOccurrences(segment, query),
+      0,
+    );
+    expect(count).toBe(1);
+    await using view = await renderMath(text, true, true);
+    view.container.setAttribute("data-timeline-row-id", "row");
+    view.container.querySelector(".chat-markdown")!.setAttribute("data-thread-find-text", "");
+    expect(
+      collectThreadFindRanges(view.container, query).map(({ range }) =>
+        range.toString().replace(/\r?\n/g, " "),
+      ),
+    ).toEqual([query]);
+  });
+
+  it("copies a whole formula when a selection starts or ends inside it", async () => {
+    await using view = await renderMath(String.raw`Before \(a + b\) after`, true);
+    const paragraph = view.container.querySelector("p")!;
+    const glyph = paragraph.querySelector(".katex .mord")!.firstChild!;
+    const range = document.createRange();
+    range.selectNodeContents(glyph);
+    expect(copyRange(range).text).toBe(String.raw`\(a + b\)`);
+    // Copy expands its own range, never the user's visible selection.
+    expect(window.getSelection()?.toString()).toBe("a");
+    range.setStart(paragraph.firstChild!, 0);
+    range.setEnd(glyph, 1);
+    expect(copyRange(range).text).toBe(String.raw`Before \(a + b\)`);
+    range.setStart(glyph, 0);
+    range.setEnd(paragraph.lastChild!, 6);
+    expect(copyRange(range).text).toBe(String.raw`\(a + b\) after`);
+  });
+
+  it("leaves math as written while the setting is off", async () => {
+    await using view = await renderMath(answer, false);
+    expect(view.container.querySelector(".katex")).toBeNull();
+    expect(view.container.textContent).toContain("Energy (E = mc^2) costs $5, not $10.");
+  });
+
+  it("typesets formulas, keeps prose, and falls back to source for invalid TeX", async () => {
+    await using view = await renderMath(answer, true);
+    const formulas = [...view.container.querySelectorAll('[role="math"]')];
+    expect(formulas.map((formula) => formula.getAttribute("aria-label"))).toEqual([
+      "E = mc^2",
+      String.raw`\int_0^1 x^2 \, dx`,
+    ]);
+    expect(formulas.every((formula) => formula.querySelector(".katex"))).toBe(true);
+    expect(view.container.textContent).toContain("costs $5, not $10.");
+    expect(view.container.querySelector("code.chat-markdown-math-source")?.textContent).toBe(
+      String.raw`\(\frac{1}{\)`,
+    );
+  });
+
+  it("uses regular Markdown for Find and restores typesetting when Find closes", async () => {
+    settingsOverrides.renderMath = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal(
+      "Highlight",
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges);
+        }
+      },
+    );
+    const highlights = new Map<string, Set<Range>>();
+    vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const text = String.raw`Needle first. \(p_i\) and \(a + b\)`;
+    function Probe({ query, searching }: { query: string; searching: boolean }) {
+      useThreadFindHighlights({
+        container,
+        query,
+        activeRowId: "row",
+        activeOccurrence: 0,
+        onActiveRange: () => {},
+      });
+      return (
+        <div data-timeline-row-id="row">
+          <div data-thread-find-text>
+            <MarkdownFindContext value={searching}>
+              <ChatMarkdown cwd={undefined} text={text} />
+            </MarkdownFindContext>
+          </div>
+        </div>
+      );
+    }
+    const frame = () =>
+      act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const typeset = () => container.querySelectorAll('[role="math"]').length;
+    try {
+      await act(() => root.render(<Probe query="" searching={false} />));
+      await act(() => import("./chat/markdownMathRenderer"));
+      await frame();
+      expect(typeset()).toBe(2);
+      const segments =
+        searchableMessageSegments({ role: "assistant", text, streaming: false }) ?? [];
+      expect(
+        segments.reduce((sum, segment) => sum + countThreadSearchOccurrences(segment, "(p_i)"), 0),
+      ).toBe(1);
+      await act(() => root.render(<Probe query="(p_i)" searching={true} />));
+      await frame();
+      await frame();
+      expect(typeset()).toBe(0);
+      expect(
+        [...(highlights.get("t3-thread-find-active") ?? [])].map((range) => range.toString()),
+      ).toEqual(["(p_i)"]);
+      await act(() => root.render(<Probe query="" searching={false} />));
+      await frame();
+      expect(typeset()).toBe(2);
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+      settingsOverrides.renderMath = false;
+    }
+  });
 });
 
 it("keeps Mermaid diagrams rendered until find selects a match in their source", async () => {

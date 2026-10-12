@@ -796,6 +796,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      renderMath: DEFAULT_UNIFIED_SETTINGS.renderMath,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -1737,6 +1738,32 @@ function WordWrapRow() {
   );
 }
 
+function MathRenderingRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("math-rendering")}
+      description={String.raw`Typeset LaTeX written as \(…\), $$…$$, or \[…\] in chat and Markdown previews.`}
+      resetAction={
+        settings.renderMath !== DEFAULT_UNIFIED_SETTINGS.renderMath ? (
+          <SettingResetButton
+            label="math rendering"
+            onClick={() => updateSettings({ renderMath: DEFAULT_UNIFIED_SETTINGS.renderMath })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.renderMath}
+          onCheckedChange={(checked) => updateSettings({ renderMath: Boolean(checked) })}
+          aria-label="Render LaTeX math"
+        />
+      }
+    />
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -1835,6 +1862,7 @@ function TypographySection() {
     >
       {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <MathRenderingRow />
     </SettingsSection>
   );
 }

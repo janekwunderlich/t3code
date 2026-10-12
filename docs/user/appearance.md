@@ -29,6 +29,18 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## Math
+
+Turn on **Math rendering** to typeset LaTeX in chat messages and Markdown previews. It recognizes
+`\(…\)` for inline math, and `$$…$$` or `\[…\]` for display math. `\[` must start a line.
+
+Single dollar signs stay plain text, so prices and shell variables are never mistaken for math. If
+your agent writes inline math as `$…$`, ask it to use `\(…\)` instead, for example in `AGENTS.md`.
+Copying any part of a typeset formula copies its LaTeX. A formula that is too large or cannot be
+typeset shows its source. While **Find in thread** is open, formulas use the regular Markdown view
+so searches match delimiters and surrounding text. Close Find to restore typesetting. This
+preference applies to the web and desktop clients.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
